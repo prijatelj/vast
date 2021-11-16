@@ -1,7 +1,22 @@
+"""
+Author: Akshay Raj Dhamija
+
+@article{rudd2017extreme,
+  title={The extreme value machine},
+  author={Rudd, Ethan M and Jain, Lalit P and Scheirer, Walter J and Boult, Terrance E},
+  journal={IEEE transactions on pattern analysis and machine intelligence},
+  volume={40},
+  number={3},
+  pages={762--768},
+  year={2017},
+  publisher={IEEE}
+}
+"""
 import torch
 import itertools
 from ..tools import pairwisedistances
 from ..DistributionModels import weibull
+from typing import Iterator, Tuple, List, Dict
 
 
 def EVM_Params(parser):
@@ -111,9 +126,59 @@ def set_cover(mr_model, positive_distances, cover_threshold):
     return (extreme_vectors_models, extreme_vectors_indexes, covered_vectors)
 
 
-def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models=None):
-    # TODO: Convert args.chunk_size from number of classes per batch to number of samples per batch.
-    # This would be useful for handeling highly unbalanced number of samples per class.
+def EVM_Training(
+    pos_classes_to_process: List[str],
+    features_all_classes: Dict[str, torch.Tensor],
+    args,
+    gpu: int,
+    models=None,
+) -> Iterator[Tuple[str, Tuple[str, dict]]]:
+    """
+    :param pos_classes_to_process: List of class names to be processed by this function in the current process class.
+    :param features_all_classes: features of all classes, note the classes in pos_classes_to_process can be a subset of the keys for this dictionary
+    :param args: A named tuple or an argument parser object containing the arguments mentioned in the EVM_Params function above.
+    :param gpu: An integer corresponding to the gpu number to use by the current process.
+    :param models: Not used during training, input ignored.
+    :return: Iterator(Tuple(parameter combination identifier, Tuple(class name, its evm model)))
+    TODO: Currently the training needs gpus, there is no cpu version for now since it is low priority.
+
+    For using with multiprocessing:
+    This function has been designed such that computational work load can be easily split into different processes while
+    reducing redundant work done for grid search. Each process is only responsible for creating models for classes mentioned
+    in the pos_classes_to_process list. For these classes they would create models for each of the possible hyper parameter
+    combinations. Please note pos_classes_to_process only contains the names of classes or the keys in features_all_classes
+    that need to be processed. The actual features are held in features_all_classes and can be in shared memory across
+    different processes. Though the pos_classes_to_process variable changes per process features_all_classes does not.
+    For a detailed example that exploits these features please visit https://github.com/akshay-raj-dhamija/vel.
+
+
+    Grid Search Capabilities:
+    This function is also capable of performing grid search for hyper parameters such as tailsize, distance multiplier
+    and cover threshold. Which are expected to be passed as list in the args variable, whose elements are supposed to be
+    the ones mentioned in the EVM_Params function. The most compute expensive part of EVM is the pairwise distance
+    calculation, which is not impacted by the hyper parameters for which grid search is performed.
+    Our approach drastically reduces the computation time by re-utilizing the pairwise distance computation across hyper
+    parameter combinations.
+    TODO: The computation time can be further reduced by reusing weibull fitting for different cover threshold parameters.
+
+
+    Memory issues:
+    It must be noted that the maximum possible tail size being considered for grid search can impact the memory consumption.
+    A variable to help reduce the memory consumption is the chunk_size parameter, the lesser the chunk_size, the lesser
+    memory is requiered. While this parameter can be very helpful when running the EVM in multiple processes, it might
+    not help if the number of classes being handled by the current process is equivalent to the total number of classes.
+    TODO: Convert args.chunk_size from number of classes per batch to number of samples per batch. This would be useful
+    for handeling highly unbalanced number of samples per class.
+
+
+    Models provided by this function:
+    This function provides models in a partitioned way using an Iterator.
+    It would only provide models for the classes mentioned in the pos_classes_to_process.
+    At each iterator step it would provide the model for a specific class and a specific hyper parameter combination.
+    The results are provided as a Tuple(str, Tuple2), where the str entry tells the hyper parameter combination.
+    The Tuple2 contains the name of the class and its corresponding EVM model.
+    """
+    device = "cpu" if gpu == -1 else f"cuda:{gpu}"
     negative_classes_for_current_batch = []
     no_of_negative_classes_for_current_batch = 0
     temp = []
@@ -127,7 +192,7 @@ def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models
         negative_classes_for_current_batch.append(torch.cat(temp))
     for pos_cls_name in pos_classes_to_process:
         # Find positive class features
-        positive_cls_feature = features_all_classes[pos_cls_name].to(f"cuda:{gpu}")
+        positive_cls_feature = features_all_classes[pos_cls_name].to(device)
         tailsize = max(args.tailsize)
         if tailsize <= 1:
             tailsize = tailsize * positive_cls_feature.shape[0]
@@ -156,7 +221,7 @@ def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models
                 f"neg_features {neg_features.shape}"
             )
             distances = pairwisedistances.__dict__[args.distance_metric](
-                positive_cls_feature, neg_features.to(f"cuda:{gpu}")
+                positive_cls_feature, neg_features.to(device)
             )
             bottom_k_distances.append(distances.cpu())
             bottom_k_distances = torch.cat(bottom_k_distances, dim=1)
@@ -171,7 +236,7 @@ def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models
                 ).values
             ]
             del distances
-        bottom_k_distances = bottom_k_distances[0].to(f"cuda:{gpu}")
+        bottom_k_distances = bottom_k_distances[0].to(device)
 
         # Find distances to other samples of same class
         positive_distances = pairwisedistances.__dict__[args.distance_metric](
@@ -183,7 +248,7 @@ def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models
             positive_distances[e].type(torch.FloatTensor),
             torch.zeros(positive_distances.shape[0]),
             atol=1e-06,
-        ), "Distances of samples to themselves is not zero"
+        ), "Distances of samples to themselves is not zero. This may be due to a precision issue, try increasing the atol value from 1e-06 to 1e-05."
 
         for distance_multiplier, cover_threshold, org_tailsize in itertools.product(
             args.distance_multiplier, args.cover_threshold, args.tailsize
@@ -195,13 +260,13 @@ def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models
             # Perform actual EVM training
             weibull_model = fit_low(bottom_k_distances, distance_multiplier, tailsize, gpu)
             extreme_vectors_models, extreme_vectors_indexes, covered_vectors = set_cover(
-                weibull_model, positive_distances.to(f"cuda:{gpu}"), cover_threshold
+                weibull_model, positive_distances.to(device), cover_threshold
             )
             extreme_vectors = torch.gather(
                 positive_cls_feature,
                 0,
                 extreme_vectors_indexes[:, None]
-                .to(f"cuda:{gpu}")
+                .to(device)
                 .repeat(1, positive_cls_feature.shape[1]),
             )
             extreme_vectors_models.tocpu()
@@ -211,24 +276,105 @@ def EVM_Training(pos_classes_to_process, features_all_classes, args, gpu, models
                 (
                     pos_cls_name,
                     dict(
+                        # torch.Tensor -- The extreme vectors used by EVM
                         extreme_vectors=extreme_vectors,
+                        # torch.LongTensor -- The index of the above extreme_vectors corresponding to their location in
+                        # features_all_classes, only useful if you want to reduce the size of EVM model you save.
                         extreme_vectors_indexes=extreme_vectors_indexes,
+                        # weibull.weibull class obj -- the output of weibulls.return_all_parameters() combined with the
+                        # extreme_vectors is the actual EVM model for one given class.
                         weibulls=extreme_vectors_models,
                     ),
                 ),
             )
 
 
-def EVM_Inference(pos_classes_to_process, features_all_classes, args, gpu, models=None):
-    for pos_cls_name in pos_classes_to_process:
-        test_cls_feature = features_all_classes[pos_cls_name].to(f"cuda:{gpu}")
+def EVM_Inference(
+    pos_classes_to_process: List[str],
+    features_all_classes: Dict[str, torch.Tensor],
+    args,
+    gpu: int,
+    models: Dict = None,
+) -> Iterator[Tuple[str, Tuple[str, torch.Tensor]]]:
+    """
+    :param pos_classes_to_process: List of batches to be processed by this function in the current process.
+    :param features_all_classes: features of all classes, note the classes in pos_classes_to_process can be a subset of
+                                the keys for this dictionary
+    :param args: Can be a named tuple or an argument parser object containing the arguments mentioned in the EVM_Params
+                function above. Only the distance_metric argument is actually used during inferencing.
+    :param gpu: An integer corresponding to the gpu number to use by the current process.
+    :param models: The collated model created for a single hyper parameter combination.
+    :return: Iterator(Tuple(str, Tuple(batch_identifier, torch.Tensor)))
+    """
+    device = "cpu" if gpu == -1 else f"cuda:{gpu}"
+    for batch_to_process in pos_classes_to_process:
+        test_cls_feature = features_all_classes[batch_to_process].to(device)
         assert test_cls_feature.shape[0] != 0
         probs = []
         for cls_no, cls_name in enumerate(sorted(models.keys())):
             distances = pairwisedistances.__dict__[args.distance_metric](
-                test_cls_feature, models[cls_name]["extreme_vectors"].to(f"cuda:{gpu}")
+                test_cls_feature, models[cls_name]["extreme_vectors"].double().to(device)
             )
             probs_current_class = models[cls_name]["weibulls"].wscore(distances)
             probs.append(torch.max(probs_current_class, dim=1).values)
         probs = torch.stack(probs, dim=-1).cpu()
-        yield ("probs", (pos_cls_name, probs))
+        yield ("probs", (batch_to_process, probs))
+
+
+class EVM_Inference_cpu_max_knowness_prob:
+    """
+    This class performs the same function as EVM_Inference but rather than providing per class knowness score, it
+    provides maximum knowness score for each sample. It is faster and currently only runs on cpu.
+    """
+
+    def __init__(self, distance_metric, models):
+        combined_weibull_model = {}
+        combined_weibull_model["Scale"] = []
+        combined_weibull_model["Shape"] = []
+        combined_weibull_model["smallScoreTensor"] = []
+
+        combined_extreme_vectors = []
+
+        for cls_no, cls_name in enumerate(sorted(models.keys())):
+            models[cls_name]["weibulls"].tocpu()
+            weibull_params_current_cls = models[cls_name][
+                "weibulls"
+            ].return_all_parameters()
+            combined_weibull_model["Scale"].extend(
+                weibull_params_current_cls["Scale"].tolist()
+            )
+            combined_weibull_model["Shape"].extend(
+                weibull_params_current_cls["Shape"].tolist()
+            )
+            combined_weibull_model["smallScoreTensor"].extend(
+                weibull_params_current_cls["smallScoreTensor"].tolist()
+            )
+            combined_extreme_vectors.extend(
+                models[cls_name]["extreme_vectors"].cpu().tolist()
+            )
+        # Only taking the last available values for signTensor and translateAmountTensor
+        combined_weibull_model["signTensor"] = weibull_params_current_cls["signTensor"]
+        combined_weibull_model["translateAmountTensor"] = weibull_params_current_cls[
+            "translateAmountTensor"
+        ]
+        combined_weibull_model["Scale"] = torch.tensor(combined_weibull_model["Scale"])
+        combined_weibull_model["Shape"] = torch.tensor(combined_weibull_model["Shape"])
+        combined_weibull_model["smallScoreTensor"] = torch.tensor(
+            combined_weibull_model["smallScoreTensor"]
+        )
+        combined_extreme_vectors = torch.tensor(
+            combined_extreme_vectors, dtype=torch.float64
+        )
+
+        self.combined_model = {}
+        self.combined_model["weibulls"] = weibull.weibull(combined_weibull_model)
+        self.combined_model["extreme_vectors"] = combined_extreme_vectors
+
+        self.distance_metric = distance_metric
+
+    def __call__(self, sample_to_process):
+        distances = pairwisedistances.__dict__[self.distance_metric](
+            sample_to_process[None, :], self.combined_model["extreme_vectors"]
+        )
+        probs = torch.max(self.combined_model["weibulls"].wscore(distances), dim=1).values
+        return probs

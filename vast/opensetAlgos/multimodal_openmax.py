@@ -1,8 +1,22 @@
+"""
+Author: Akshay Raj Dhamija.
+@MSthesis{dhamija2018openset,
+  title={An Openset Approach To Object Detection},
+  author={Dhamija, Akshay Raj},
+  year={2018},
+  school={University of Colorado Colorado Springs}
+}
+
+This implementation supports various clustering algorithms like KMeans, DBScan and FINCH.
+Compute time for both KMeans and DBScan has been reduced by using GPU based implementations provided in
+vast/clusteringAlgos/clustering.py
+"""
 import torch
 import itertools
 from ..tools import pairwisedistances
 from ..DistributionModels import weibull
 from .openmax import fit_high
+from typing import Iterator, Tuple, List, Dict
 
 
 def MultiModalOpenMax_Params(parser):
@@ -20,6 +34,13 @@ def MultiModalOpenMax_Params(parser):
         type=float,
         default=[1.0],
         help="distance multiplier to use default: %(default)s",
+    )
+    MultiModalOpenMax_params.add_argument(
+        "--translateAmount",
+        nargs="+",
+        type=float,
+        default=1.0,
+        help="translateAmount to use default: %(default)s",
     )
     MultiModalOpenMax_params.add_argument(
         "--distance_metric",
@@ -43,9 +64,23 @@ def MultiModalOpenMax_Params(parser):
 
 
 def MultiModalOpenMax_Training(
-    pos_classes_to_process, features_all_classes, args, gpu, models=None
-):
+    pos_classes_to_process: List[str],
+    features_all_classes: Dict[str, torch.Tensor],
+    args,
+    gpu: int,
+    models=None,
+) -> Iterator[Tuple[str, Tuple[str, dict]]]:
+    """
+    :param pos_classes_to_process: List of class names to be processed by this function in the current process.
+    :param features_all_classes: features of all classes, note the classes in pos_classes_to_process can be a subset of the keys for this dictionary
+    :param args: A named tuple or an argument parser object containing the arguments mentioned in the EVM_Params function above.
+    :param gpu: An integer corresponding to the gpu number to use by the current process.
+    :param models: Not used during training, input ignored.
+    :return: Iterator(Tuple(parameter combination identifier, Tuple(class name, its evm model)))
+    """
     from ..clusteringAlgos import clustering
+
+    device = "cpu" if gpu == -1 else f"cuda:{gpu}"
 
     for pos_cls_name in pos_classes_to_process:
         features = features_all_classes[pos_cls_name]
@@ -59,7 +94,7 @@ def MultiModalOpenMax_Training(
             verbose=False,
             distance_metric=args.distance_metric,
         )
-        features = features.to(f"cuda:{gpu}")
+        features = features.to(device)
         centroids = centroids.type(features.dtype)
         # TODO: This grid search is not optimized for speed due to redundant distance computation,
         #  needs to be improved if grid search for MultiModal OpenMax is used extensively on big datasets.
@@ -70,13 +105,14 @@ def MultiModalOpenMax_Training(
             wbFits = []
             smallScoreTensor = []
             for MAV_no in set(assignments.cpu().tolist()) - {-1}:
-                MAV = centroids[MAV_no, :].to(f"cuda:{gpu}")
-                f = features[assignments == MAV_no].to(f"cuda:{gpu}")
+                MAV = centroids[MAV_no, :].to(device)
+                f = features[assignments == MAV_no].to(device)
                 distances = pairwisedistances.__dict__[args.distance_metric](
                     f, MAV[None, :]
                 )
-                if distances.shape[0] <= 5:
-                    continue
+                # Rather than continuing now fit_high handels this by returning invalid weibul shape, scale
+                # if distances.shape[0] <= 5:
+                #     continue
                 weibull_model = fit_high(distances.T, distance_multiplier, tailsize)
                 MAVs.append(MAV)
                 wbFits.append(weibull_model.wbFits)
@@ -95,7 +131,7 @@ def MultiModalOpenMax_Training(
                     Scale=wbFits[:, 1],
                     Shape=wbFits[:, 0],
                     signTensor=weibull_model.sign,
-                    translateAmountTensor=None,
+                    translateAmountTensor=args.translateAmount,
                     smallScoreTensor=smallScoreTensor,
                 )
             )
@@ -107,16 +143,31 @@ def MultiModalOpenMax_Training(
 
 
 def MultiModalOpenMax_Inference(
-    pos_classes_to_process, features_all_classes, args, gpu, models=None
-):
-    for pos_cls_name in pos_classes_to_process:
-        test_cls_feature = features_all_classes[pos_cls_name].to(f"cuda:{gpu}")
+    pos_classes_to_process: List[str],
+    features_all_classes: Dict[str, torch.Tensor],
+    args,
+    gpu: int,
+    models: Dict = None,
+) -> Iterator[Tuple[str, Tuple[str, torch.Tensor]]]:
+    """
+    :param pos_classes_to_process: List of batches to be processed by this function in the current process.
+    :param features_all_classes: features of all classes, note the classes in pos_classes_to_process can be a subset of
+                                the keys for this dictionary
+    :param args: Can be a named tuple or an argument parser object containing the arguments mentioned in the EVM_Params
+                function above. Only the distance_metric argument is actually used during inferencing.
+    :param gpu: An integer corresponding to the gpu number to use by the current process.
+    :param models: The collated model created for a single hyper parameter combination.
+    :return: Iterator(Tuple(str, Tuple(batch_identifier, torch.Tensor)))
+    """
+    device = "cpu" if gpu == -1 else f"cuda:{gpu}"
+    for batch_to_process in pos_classes_to_process:
+        test_cls_feature = features_all_classes[batch_to_process].to(device)
         probs = []
         for cls_no, cls_name in enumerate(sorted(models.keys())):
             distances = pairwisedistances.__dict__[args.distance_metric](
-                test_cls_feature, models[cls_name]["MAVs"].to(f"cuda:{gpu}").double()
+                test_cls_feature, models[cls_name]["MAVs"].to(device).double()
             )
             probs_current_class = 1 - models[cls_name]["weibulls"].wscore(distances)
             probs.append(torch.max(probs_current_class, dim=1).values)
         probs = torch.stack(probs, dim=-1).cpu()
-        yield ("probs", (pos_cls_name, probs))
+        yield ("probs", (batch_to_process, probs))

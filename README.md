@@ -4,11 +4,14 @@ Vision And Security Technology (VAST) Lab.
 
 ## Setup
 ### For users
-`pip install git+https://github.com/vast/vast.git`
+`pip install git+https://github.com/Vastlab/vast.git`
+
+**NOTE:** There is an unadressed issue due to which the above install makes features like FINCH unable to end user.
+If you intend to use FINCH please follow the for developers instructions below.
 ### For developers
 `git clone --recurse-submodules https://github.com/Vastlab/vast.git`
 
-`pip install -e .`
+`pip install -e .[dev]`
 
 ## Contents:
 ### Loss Functions
@@ -34,7 +37,7 @@ computation may have slight variations.
 
 ### Tools
 1. [Concatenate multiple torch datasets](vast/tools/ConcatDataset.py) Useful for openset learning.
-2. [Feature Extraction](standAloneTools/FeatureExtractors) to HDF5 file from a specific layer of a pytorch model
+2. [Feature Extraction](vast/scripts/FeatureExtractors) to HDF5 file from a specific layer of a pytorch model
 3. [Multiprocessing Logger](vast/tools/logger.py)
 
 ### Visualization
