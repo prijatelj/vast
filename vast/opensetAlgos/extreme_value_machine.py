@@ -1,4 +1,5 @@
 """
+2021 copyright Derek S. Prijatelj
 [Insert License Here]
 =====
 
@@ -147,6 +148,12 @@ class ExtremeValueMachine(SupervisedClassifier):
         use as the tail size.
     cover_threshold : float | torch.Tensor.float
     distance_multiplier : float | Torch
+    device : torch.device
+        The torch device to compute fitting and predictions on. Currently
+        upstream VAST evm only supports gpu and the specific gpu to use must be
+        given explicitly. There is work to be done in this class to enable the
+        use of the parallelization of the upstream EVM functions for fitting
+        and inference.
     distance_metric : 'cosine' | 'euclidean'
         The distance metric to use either 'cosine' or 'euclidean'.
     chunk_size : int = 200
@@ -154,11 +161,10 @@ class ExtremeValueMachine(SupervisedClassifier):
         A dictionary of class encoding to that class' 1 vs Rest classifier.
         These 1 vs Rest classifiers form this EVM model.
     label_enc : NominalDataEncoder
-        The encoder to manage the labels known to the EVM.
+        The encoder to manage the labels known to the EVM. These known labels
+        corresponds to the number of EVM1vsRests.
     _increments : int = 0
         The number of incremental learning phases completed.
-    device : torch.device = 'cuda'
-        The torch device to compute fitting and predictions on.
 
     Notes
     -----
@@ -175,9 +181,9 @@ class ExtremeValueMachine(SupervisedClassifier):
         cover_threshold,
         distance_multiplier,
         labels,
+        device,
         distance_metric="cosine",
         chunk_size=200,
-        device="cuda",
         tail_size_is_ratio=True,
         *args,
         **kwargs,
@@ -189,8 +195,17 @@ class ExtremeValueMachine(SupervisedClassifier):
         self.device = torch.device(device)
 
         # TODO replace hotfix with upstream change for support for torch.device
-        if self.device.index is None:
-            raise ValueError("Upstream `vast` only supports indexed cuda torch devices")
+        if (
+            isinstance(device, str)
+            or (isinstance(device, torch.device) and self.device.index is None)
+            or not isinstance(device, torch.device)
+        ):
+            raise TypeError(
+                f"Expected torch.device with index, recieved {type(device)}."
+                "Upstream `vast` only supports indexed cuda torch devices.",
+                "Please provide a torch.device for cuda with a specified",
+                "GPU index.",
+            )
 
         self.tail_size = tail_size
         if tail_size_is_ratio:
