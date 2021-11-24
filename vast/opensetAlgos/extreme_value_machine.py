@@ -197,7 +197,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         # TODO replace hotfix with upstream change for support for torch.device
         if (
             isinstance(device, str)
-            or (isinstance(device, torch.device) and self.device.index is None)
+            or (isinstance(device, torch.device) and device.index is None)
             or not isinstance(device, torch.device)
         ):
             raise TypeError(
