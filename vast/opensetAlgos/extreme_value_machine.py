@@ -193,21 +193,19 @@ class ExtremeValueMachine(SupervisedClassifier):
         self.one_vs_rests = None
         self._increments = 0
 
+        self.device = torch.device(device)
+
 
         # TODO replace hotfix with upstream change for support for torch.device
         if (
-            isinstance(device, str)
-            or (isinstance(device, torch.device) and device.index is None)
-            or not isinstance(device, torch.device)
+            isinstance(self.device, torch.device) and self.device.index is None
         ):
             raise TypeError(
-                f"Expected torch.device with index, recieved {type(device)}."
-                "Upstream `vast` only supports indexed cuda torch devices.",
-                "Please provide a torch.device for cuda with a specified",
-                "GPU index.",
+                f"Expected torch.device with index, recieved {device} of type",
+                f"{type(device)}. Upstream `vast` only supports indexed cuda",
+                "torch devices. Please provide a torch.device for cuda with a",
+                "specified GPU index, or a supported str such as 'cuda:0'.",
             )
-
-        self.device = device
 
         self.tail_size = tail_size
         if tail_size_is_ratio:
