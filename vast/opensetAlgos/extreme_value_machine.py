@@ -192,7 +192,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         super(ExtremeValueMachine, self).__init__(labels, *args, **kwargs)
         self.one_vs_rests = None
         self._increments = 0
-        self.device = torch.device(device)
+
 
         # TODO replace hotfix with upstream change for support for torch.device
         if (
@@ -206,6 +206,8 @@ class ExtremeValueMachine(SupervisedClassifier):
                 "Please provide a torch.device for cuda with a specified",
                 "GPU index.",
             )
+
+        self.device = device
 
         self.tail_size = tail_size
         if tail_size_is_ratio:
