@@ -54,8 +54,8 @@ def setup(seed=0, device="cuda:0"):
         0.5,
         1.0,
         [0, 1, 2, 3],
-        "cosine",
         device=device,
+        distance_metric="cosine",
         tail_size_is_ratio=False,
     )
 
