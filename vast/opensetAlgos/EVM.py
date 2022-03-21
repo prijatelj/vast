@@ -178,7 +178,9 @@ def EVM_Training(
     The results are provided as a Tuple(str, Tuple2), where the str entry tells the hyper parameter combination.
     The Tuple2 contains the name of the class and its corresponding EVM model.
     """
+    print("hello world!")
     device = "cpu" if gpu == -1 else f"cuda:{gpu}"
+    device = "cpu"
     negative_classes_for_current_batch = []
     no_of_negative_classes_for_current_batch = 0
     temp = []
@@ -307,6 +309,7 @@ def EVM_Inference(
     :return: Iterator(Tuple(str, Tuple(batch_identifier, torch.Tensor)))
     """
     device = "cpu" if gpu == -1 else f"cuda:{gpu}"
+    device = "cpu"
     for batch_to_process in pos_classes_to_process:
         test_cls_feature = features_all_classes[batch_to_process].to(device)
         assert test_cls_feature.shape[0] != 0
