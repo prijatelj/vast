@@ -47,13 +47,17 @@ class EVM1vsRest(object):
         extreme_vectors,
         extreme_vectors_indices,
         weibulls,
-        #device='cpu',
+        device='cpu',
     ):
         # TODO consider saving EVM attribs in the EVM1vsRest. Redundant though.
-        #self.device = torch.device(device)
-        self.extreme_vectors =  extreme_vectors #.to(self.device)
-        self.extreme_vectors_indices = extreme_vectors_indices #.to(self.device)
+        self.device = torch.device(device)
+        self.extreme_vectors =  extreme_vectors.to(self.device)
+        self.extreme_vectors_indices = extreme_vectors_indices.to(self.device)
         self.weibulls = weibulls
+
+        # Cast internals to device
+        self.weibulls.wbFits.to(device)
+        self.weibulls.smallScoreTensor.to(device)
 
     # def __dict__(self):
     #    """Dictionary version of these attributes."""
@@ -202,7 +206,12 @@ class ExtremeValueMachine(SupervisedClassifier):
         self._increments = 0
 
         self.device = torch.device(device)
-        self.dtype = dtype
+        if isinstance(dtype, str):
+            self.dtype = getattr(torch, dtype)
+        elif isinstance(dtype, torch.dtype):
+            self.dtype = dtype
+        else:
+            raise TypeError(f'Expected valid torch.dtype, got: {dtype}')
 
         # TODO replace hotfix with upstream change for support for torch.device
         if self.device.type == 'cuda' and self.device.index is None:
@@ -353,26 +362,20 @@ class ExtremeValueMachine(SupervisedClassifier):
         if self.tail_size_int is None:
             self.tail_size_int = int(np.round(self.tail_size * len(points)))
 
-        # TODO If device.type == 'cuda' then move all Tensors into VRAM
-
-        evm_fit = EVM_Training(
+        # Iterate thru the generator EVM_Training and move the tensors off VRAM
+        self.one_vs_rests = {}
+        for one_vs_rest in EVM_Training(
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
             self.device.index if self.device.type == 'cuda' else -1,
             dtype=self.dtype,
-        )
-
-        # TODO If device.type == 'cuda' then move all Tensors into cpu RAM
-
-        self.one_vs_rests = {
-            one_vs_rest[1][0]: EVM1vsRest(
+        ):
+            self.one_vs_rests[one_vs_rest[1][0]] = EVM1vsRest(
                 one_vs_rest[1][1]["extreme_vectors"],
                 one_vs_rest[1][1]["extreme_vectors_indexes"],
                 one_vs_rest[1][1]["weibulls"],
             )
-            for one_vs_rest in evm_fit
-        }
         self._increments = 1
 
     # TODO make this a ray function for easy parallelization.
@@ -387,27 +390,21 @@ class ExtremeValueMachine(SupervisedClassifier):
         # TODO figure out how to efficiently update a subset of the EVM1vsRests
         # Same thing as initial fit but it should be more flexible.
 
-        # TODO If device.type == 'cuda' then move all Tensors into VRAM
-
-        evm_fit = EVM_Training(
+        # Iterate thru the generator EVM_Training and move the tensors off VRAM
+        self.one_vs_rests = {}
+        for one_vs_rest in EVM_Training(
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
             self.device.index if self.device.type == 'cuda' else -1,
             {k: vars(v) for k, v in self.one_vs_rests.items()},
             dtype=self.dtype,
-        )
-
-        # TODO If device.type == 'cuda' then move all Tensors into cpu RAM
-
-        self.one_vs_rests = {
-            one_vs_rest[1][0]: EVM1vsRest(
+        ):
+            self.one_vs_rests[one_vs_rest[1][0]] = EVM1vsRest(
                 one_vs_rest[1][1]["extreme_vectors"],
                 one_vs_rest[1][1]["extreme_vectors_indexes"],
                 one_vs_rest[1][1]["weibulls"],
             )
-            for one_vs_rest in evm_fit
-        }
         self._increments += 1
 
     # TODO make this a ray function for easy parallelization. Lesser priority
@@ -424,7 +421,6 @@ class ExtremeValueMachine(SupervisedClassifier):
         # pos_cls_name in EVM_Inference is actually the batch ID. So keys are
         # batch ids and values are the tensors of the different batches.
 
-        # TODO If device.type == 'cuda' then move all Tensors into VRAM
         return next(
             EVM_Inference(
                 ["batch"],
@@ -436,8 +432,6 @@ class ExtremeValueMachine(SupervisedClassifier):
                 dtype=self.dtype,
             )
         )[1][1]
-
-        # TODO If device.type == 'cuda' then move all Tensors into cpu RAM
 
     def known_probs(self, points, gpu=None):
         """Predicts known probability vector without the unknown class.

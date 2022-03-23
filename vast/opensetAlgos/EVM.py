@@ -132,6 +132,7 @@ def EVM_Training(
     args,
     gpu: int,
     models=None,
+    dtype: torch.dtype = torch.double,
 ) -> Iterator[Tuple[str, Tuple[str, dict]]]:
     """
     :param pos_classes_to_process: List of class names to be processed by this function in the current process class.
@@ -258,7 +259,7 @@ def EVM_Training(
             else:
                 tailsize = int(org_tailsize)
             # Perform actual EVM training
-            weibull_model = fit_low(bottom_k_distances, distance_multiplier, tailsize, gpu)
+            weibull_model = fit_low(bottom_k_distances, distance_multiplier, tailsize, gpu, dtype=dtype)
             extreme_vectors_models, extreme_vectors_indexes, covered_vectors = set_cover(
                 weibull_model, positive_distances.to(device), cover_threshold
             )
