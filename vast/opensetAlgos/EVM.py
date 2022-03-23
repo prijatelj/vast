@@ -63,10 +63,10 @@ def EVM_Params(parser):
     )
 
 
-def fit_low(distances, distance_multiplier, tailsize, gpu):
+def fit_low(distances, distance_multiplier, tailsize, gpu, dtype=torch.double):
     mr = weibull.weibull()
     mr.FitLow(
-        distances.double() * distance_multiplier,
+        distances.to(dtype) * distance_multiplier,
         min(tailsize, distances.shape[1]),
         isSorted=False,
         gpu=gpu,
@@ -295,6 +295,7 @@ def EVM_Inference(
     args,
     gpu: int,
     models: Dict = None,
+    dtype: torch.dtype = torch.double,
 ) -> Iterator[Tuple[str, Tuple[str, torch.Tensor]]]:
     """
     :param pos_classes_to_process: List of batches to be processed by this function in the current process.
@@ -313,7 +314,7 @@ def EVM_Inference(
         probs = []
         for cls_no, cls_name in enumerate(sorted(models.keys())):
             distances = pairwisedistances.__dict__[args.distance_metric](
-                test_cls_feature, models[cls_name]["extreme_vectors"].double().to(device)
+                test_cls_feature, models[cls_name]["extreme_vectors"].to(device, dtype)
             )
             probs_current_class = models[cls_name]["weibulls"].wscore(distances)
             probs.append(torch.max(probs_current_class, dim=1).values)

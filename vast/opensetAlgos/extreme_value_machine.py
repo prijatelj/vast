@@ -7,8 +7,8 @@ Modified from Derek's original 2020 wrapper for MultipleEVM class from VAST.
 This also performs some modifications to the older MultipleEVM code for saving
 and loading the EVM1vsRest objects.
 """
-import logging
 from dataclasses import dataclass
+import logging
 
 import h5py
 import numpy as np
@@ -22,7 +22,6 @@ from vast.opensetAlgos.EVM import EVM_Training, EVM_Inference
 from vast.DistributionModels.weibull import weibull
 
 
-@dataclass
 class EVM1vsRest(object):
     """A single 1 vs Rest classifier for a known class in the EVM model. This
     class is not intended to be used on its own during inference time, as it is
@@ -43,11 +42,18 @@ class EVM1vsRest(object):
         The output of `weibulls.return_all_parameters()` combined with the
         `extreme_vectors` is the EVM 1vsRest for one class (This class).
     """
-
-    # TODO consider saving EVM attribs in the EVM1vsRest. Redundant though.
-    extreme_vectors: torch.Tensor
-    extreme_vectors_indices: torch.Tensor
-    weibulls: weibull
+    def __init__(
+        self,
+        extreme_vectors,
+        extreme_vectors_indices,
+        weibulls,
+        #device='cpu',
+    ):
+        # TODO consider saving EVM attribs in the EVM1vsRest. Redundant though.
+        #self.device = torch.device(device)
+        self.extreme_vectors =  extreme_vectors #.to(self.device)
+        self.extreme_vectors_indices = extreme_vectors_indices #.to(self.device)
+        self.weibulls = weibulls
 
     # def __dict__(self):
     #    """Dictionary version of these attributes."""
@@ -98,8 +104,10 @@ class EVM1vsRest(object):
         )
 
     @staticmethod
-    def load(h5):
+    def load(h5, device='cpu'):
         """Load the model from the given HDF5 file."""
+        device = torch.device(device)
+
         # Open the HDF5 for reading
         if isinstance(h5, str):
             h5 = h5py.File(h5, "r")
@@ -109,15 +117,15 @@ class EVM1vsRest(object):
 
         # Load extreme_vectors, extreme_vectors_indices, and weibulls
         return EVM1vsRest(
-            torch.tensor(h5["extreme_vectors"][()]),
-            torch.tensor(h5["extreme_vectors_indices"][()]),
+            torch.tensor(h5["extreme_vectors"][()]).to(device),
+            torch.tensor(h5["extreme_vectors_indices"][()]).to(device),
             weibull(
                 {
-                    "Scale": torch.from_numpy(h5_weibulls["Scale"][()]),
-                    "Shape": torch.from_numpy(h5_weibulls["Shape"][()]),
+                    "Scale": torch.from_numpy(h5_weibulls["Scale"][()]).to(device),
+                    "Shape": torch.from_numpy(h5_weibulls["Shape"][()]).to(device),
                     "signTensor": h5_weibulls["signTensor"][()],
                     "translateAmountTensor": h5_weibulls["translateAmountTensor"][()],
-                    "smallScoreTensor": torch.from_numpy(h5_weibulls["smallScore"][()]),
+                    "smallScoreTensor": torch.from_numpy(h5_weibulls["smallScore"][()]).to(device),
                 }
             ),
         )
@@ -174,7 +182,6 @@ class ExtremeValueMachine(SupervisedClassifier):
     the PyTorch API. Adding the use of Ray where noted may aid the parallel
     processing as well.
     """
-
     def __init__(
         self,
         tail_size,
@@ -185,6 +192,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         distance_metric="cosine",
         chunk_size=200,
         tail_size_is_ratio=True,
+        dtype=torch.double,
         *args,
         **kwargs,
     ):
@@ -194,17 +202,16 @@ class ExtremeValueMachine(SupervisedClassifier):
         self._increments = 0
 
         self.device = torch.device(device)
-
+        self.dtype = dtype
 
         # TODO replace hotfix with upstream change for support for torch.device
-        if (
-            isinstance(self.device, torch.device) and self.device.index is None
-        ):
+        if self.device.type == 'cuda' and self.device.index is None:
             raise TypeError(
                 f"Expected torch.device with index, recieved {device} of type",
                 f"{type(device)}. Upstream `vast` only supports indexed cuda",
                 "torch devices. Please provide a torch.device for cuda with a",
                 "specified GPU index, or a supported str such as 'cuda:0'.",
+                "Device may be given as 'cpu' for CPU only computation.",
             )
 
         self.tail_size = tail_size
@@ -346,12 +353,17 @@ class ExtremeValueMachine(SupervisedClassifier):
         if self.tail_size_int is None:
             self.tail_size_int = int(np.round(self.tail_size * len(points)))
 
+        # TODO If device.type == 'cuda' then move all Tensors into VRAM
+
         evm_fit = EVM_Training(
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
-            self.device.index,
+            self.device.index if self.device.type == 'cuda' else -1,
+            dtype=self.dtype,
         )
+
+        # TODO If device.type == 'cuda' then move all Tensors into cpu RAM
 
         self.one_vs_rests = {
             one_vs_rest[1][0]: EVM1vsRest(
@@ -374,13 +386,19 @@ class ExtremeValueMachine(SupervisedClassifier):
         """
         # TODO figure out how to efficiently update a subset of the EVM1vsRests
         # Same thing as initial fit but it should be more flexible.
+
+        # TODO If device.type == 'cuda' then move all Tensors into VRAM
+
         evm_fit = EVM_Training(
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
-            self.device.index,
+            self.device.index if self.device.type == 'cuda' else -1,
             {k: vars(v) for k, v in self.one_vs_rests.items()},
+            dtype=self.dtype,
         )
+
+        # TODO If device.type == 'cuda' then move all Tensors into cpu RAM
 
         self.one_vs_rests = {
             one_vs_rest[1][0]: EVM1vsRest(
@@ -405,16 +423,21 @@ class ExtremeValueMachine(SupervisedClassifier):
         # defined bathces. So this need changed but it should run for now.
         # pos_cls_name in EVM_Inference is actually the batch ID. So keys are
         # batch ids and values are the tensors of the different batches.
+
+        # TODO If device.type == 'cuda' then move all Tensors into VRAM
         return next(
             EVM_Inference(
                 ["batch"],
                 {"batch": points},
                 self._args,
-                self.device.index,
+                self.device.index if self.device.type == 'cuda' else -1,
                 # Create the models as expected by EVM_Inference
                 {k: vars(v) for k, v in self.one_vs_rests.items()},
+                dtype=self.dtype,
             )
         )[1][1]
+
+        # TODO If device.type == 'cuda' then move all Tensors into cpu RAM
 
     def known_probs(self, points, gpu=None):
         """Predicts known probability vector without the unknown class.
@@ -520,12 +543,15 @@ class ExtremeValueMachine(SupervisedClassifier):
         labels=None,
         labels_dtype=None,
         train_hyperparams=None,
-        device="cuda",
+        device="cpu",
+        #TODO separate compute device from storage device, store on CPU always
     ):
         """Performs the same load functionality as in MultipleEVM but loads the
         ordered labels from the h5 file for the label encoder and other
         hyperparameters if they are present.
         """
+        device = torch.device(device)
+
         if isinstance(h5, str):
             h5 = h5py.File(h5, "r")
 
@@ -559,7 +585,9 @@ class ExtremeValueMachine(SupervisedClassifier):
         one_vs_rests = {}
         for i, label in enumerate(labels):
             if f"EVM1vsRest-{i}" in h5.keys():
-                one_vs_rests[i] = EVM1vsRest.load(h5[f"EVM1vsRest-{i}"])
+                one_vs_rests[i] = EVM1vsRest.load(
+                    h5[f"EVM1vsRest-{i}"],
+                )
 
         # Load training vars if not given
         if train_hyperparams is None:
