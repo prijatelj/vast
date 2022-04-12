@@ -57,6 +57,7 @@ def setup(seed=0, device="cuda:0"):
         device=device,
         distance_metric="cosine",
         tail_size_is_ratio=False,
+        dtype=torch.float,
     )
 
     return toy_sim, evm
