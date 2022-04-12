@@ -83,7 +83,10 @@ test_features, test_labels = toy_sim.eq_sample_n(test_num_each)
 # preds = evm.predict(test_features)
 
 kpreds = evm.known_probs(test_features)
-print((kpreds.argmax(1) == test_labels).sum().tolist() / len(test_labels))
+print(
+    'evm.known_probs(test_features): ',
+    (kpreds.argmax(1) == test_labels).sum().tolist() / len(test_labels),
+)
 
 # Generate the train samples
 inc_train_features, inc_train_labels = toy_sim.eq_sample_n(inc_train_num_each)
@@ -110,7 +113,10 @@ test_labels = torch.cat([test_labels, inc_test_labels])
 # preds = evm.predict(test_features)
 
 kpreds = evm.known_probs(test_features)
-print((kpreds.argmax(1) == test_labels).sum().tolist() / len(test_labels))
+print(
+    'evm.known_probs() first increment and 2nd increment test features: ',
+    (kpreds.argmax(1) == test_labels).sum().tolist() / len(test_labels),
+)
 
 """
 # To visualize the results:
