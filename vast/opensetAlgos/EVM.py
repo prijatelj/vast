@@ -178,7 +178,6 @@ def EVM_Training(
     The results are provided as a Tuple(str, Tuple2), where the str entry tells the hyper parameter combination.
     The Tuple2 contains the name of the class and its corresponding EVM model.
     """
-    print("hello world!")
     device = "cpu" if gpu == -1 else f"cuda:{gpu}"
     device = "cpu"
     negative_classes_for_current_batch = []
