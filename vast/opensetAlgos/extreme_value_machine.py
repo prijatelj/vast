@@ -42,16 +42,17 @@ class EVM1vsRest(object):
         The output of `weibulls.return_all_parameters()` combined with the
         `extreme_vectors` is the EVM 1vsRest for one class (This class).
     """
+
     def __init__(
         self,
         extreme_vectors,
         extreme_vectors_indices,
         weibulls,
-        device='cpu',
+        device="cpu",
     ):
         # TODO consider saving EVM attribs in the EVM1vsRest. Redundant though.
         self.device = torch.device(device)
-        self.extreme_vectors =  extreme_vectors.to(self.device)
+        self.extreme_vectors = extreme_vectors.to(self.device)
         self.extreme_vectors_indices = extreme_vectors_indices.to(self.device)
         self.weibulls = weibulls
 
@@ -108,7 +109,7 @@ class EVM1vsRest(object):
         )
 
     @staticmethod
-    def load(h5, device='cpu'):
+    def load(h5, device="cpu"):
         """Load the model from the given HDF5 file."""
         device = torch.device(device)
 
@@ -129,7 +130,9 @@ class EVM1vsRest(object):
                     "Shape": torch.from_numpy(h5_weibulls["Shape"][()]).to(device),
                     "signTensor": h5_weibulls["signTensor"][()],
                     "translateAmountTensor": h5_weibulls["translateAmountTensor"][()],
-                    "smallScoreTensor": torch.from_numpy(h5_weibulls["smallScore"][()]).to(device),
+                    "smallScoreTensor": torch.from_numpy(h5_weibulls["smallScore"][()]).to(
+                        device
+                    ),
                 }
             ),
         )
@@ -154,12 +157,12 @@ class ExtremeValueMachine(SupervisedClassifier):
 
     Attributes
     ----------
-    tail_size : int | float
-        When an `int`, the number of distances on which the weibull models are
-        fit. When a float, then it is the ratio of points in the initial fit to
-        use as the tail size.
+    tail_size : float
+        When an tail_size_is_ratio is False, the number of distances on which
+        the weibull models are fit. When an tail_size_is_ratio is True, then it
+        is the ratio of points in the initial fit to use as the tail size.
     cover_threshold : float | torch.Tensor.float
-    distance_multiplier : float | Torch
+    distance_multiplier : float | torch.float
     device : torch.device
         The torch device to compute fitting and predictions on. Currently
         upstream VAST evm only supports gpu and the specific gpu to use must be
@@ -169,7 +172,8 @@ class ExtremeValueMachine(SupervisedClassifier):
     distance_metric : 'cosine' | 'euclidean'
         The distance metric to use either 'cosine' or 'euclidean'.
     chunk_size : int = 200
-    one_vs_rests: {class_enc: EVM1vsRest} = None
+    one_vs_rests: dict = None
+        {class_enc: EVM1vsRest} = None
         A dictionary of class encoding to that class' 1 vs Rest classifier.
         These 1 vs Rest classifiers form this EVM model.
     label_enc : NominalDataEncoder
@@ -177,6 +181,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         corresponds to the number of EVM1vsRests.
     _increments : int = 0
         The number of incremental learning phases completed.
+    dtype : torch.dtype
 
     Notes
     -----
@@ -186,6 +191,7 @@ class ExtremeValueMachine(SupervisedClassifier):
     the PyTorch API. Adding the use of Ray where noted may aid the parallel
     processing as well.
     """
+
     def __init__(
         self,
         tail_size,
@@ -200,6 +206,27 @@ class ExtremeValueMachine(SupervisedClassifier):
         *args,
         **kwargs,
     ):
+        """Init the extreme value machine.
+
+        Args
+        ----
+        tail_size : see self
+        cover_threshold : see self
+        distance_multiplier : see self
+        labels : NominalDataEncoder.load
+        device : see self
+        distance_metric : see self
+        chunk_size : see self
+        tail_size_is_ratio : bool = True
+            If True, the tail_size is interpretted as a ratio or percent of
+            the available data during fitting.
+        dtype : str = torch.double
+            str | torch.dtype
+
+        Notes
+        -----
+        see SupervisedClassifier.__init__
+        """
         # Create a NominalDataEncoder to handle the class encodings
         super(ExtremeValueMachine, self).__init__(labels, *args, **kwargs)
         self.one_vs_rests = None
@@ -211,10 +238,10 @@ class ExtremeValueMachine(SupervisedClassifier):
         elif isinstance(dtype, torch.dtype):
             self.dtype = dtype
         else:
-            raise TypeError(f'Expected valid torch.dtype, got: {dtype}')
+            raise TypeError(f"Expected valid torch.dtype, got: {dtype}")
 
         # TODO replace hotfix with upstream change for support for torch.device
-        if self.device.type == 'cuda' and self.device.index is None:
+        if self.device.type == "cuda" and self.device.index is None:
             raise TypeError(
                 f"Expected torch.device with index, recieved {device} of type",
                 f"{type(device)}. Upstream `vast` only supports indexed cuda",
@@ -255,6 +282,11 @@ class ExtremeValueMachine(SupervisedClassifier):
 
     @property
     def get_increment(self):
+        # TODO depracate this.
+        return self._increments
+
+    @property
+    def increment(self):
         return self._increments
 
     # TODO make this a ray function for easy parallelization.
@@ -307,23 +339,15 @@ class ExtremeValueMachine(SupervisedClassifier):
                 points = [torch.Tensor(pts) for pts in points]
             elif not all([isinstance(pts, torch.Tensor) for pts in points]):
                 raise TypeError(
-                    " ".join(
-                        [
-                            "expected points to be of types: list(np.ndarray),",
-                            "list(torch.tensor), or np.ndarray with labels as an",
-                            "aligned list or np.ndarray",
-                        ]
-                    )
+                    "expected points to be of types: list(np.ndarray), "
+                    "list(torch.tensor), or np.ndarray with labels as an "
+                    "aligned list or np.ndarray"
                 )
         else:
             raise TypeError(
-                " ".join(
-                    [
-                        "expected points to be of types: list(np.ndarray),",
-                        "list(torch.Tensor), or (np.ndarray torch.Tensor) with labels",
-                        "as an aligned (list or np.ndarray)",
-                    ]
-                )
+                "expected points to be of types: list(np.ndarray), "
+                "list(torch.Tensor), or (np.ndarray torch.Tensor) with labels "
+                "as an aligned (list or np.ndarray)"
             )
 
         # Ensure extra_negatives is of expected form (no labels for these)
@@ -335,13 +359,9 @@ class ExtremeValueMachine(SupervisedClassifier):
             isinstance(extra_negatives, torch.Tensor) and len(extra_negatives.shape) == 2
         ):
             raise TypeError(
-                " ".join(
-                    [
-                        "The extra_negatives must be either None, torch.Tensor of",
-                        "shape 2, or an object broadcastable to such a torch.Tensor.",
-                        f"But recieved type `{type(extra_negatives)}`.",
-                    ]
-                )
+                "The extra_negatives must be either None, torch.Tensor of "
+                "shape 2, or an object broadcastable to such a torch.Tensor. "
+                f"But recieved type `{type(extra_negatives)}`."
             )
 
         if init_fit or (init_fit is None and self._increments == 0):
@@ -368,7 +388,7 @@ class ExtremeValueMachine(SupervisedClassifier):
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
-            self.device.index if self.device.type == 'cuda' else -1,
+            self.device.index if self.device.type == "cuda" else -1,
             dtype=self.dtype,
         ):
             self.one_vs_rests[one_vs_rest[1][0]] = EVM1vsRest(
@@ -396,7 +416,7 @@ class ExtremeValueMachine(SupervisedClassifier):
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
-            self.device.index if self.device.type == 'cuda' else -1,
+            self.device.index if self.device.type == "cuda" else -1,
             {k: vars(v) for k, v in self.one_vs_rests.items()},
             dtype=self.dtype,
         ):
@@ -426,7 +446,7 @@ class ExtremeValueMachine(SupervisedClassifier):
                 ["batch"],
                 {"batch": points},
                 self._args,
-                self.device.index if self.device.type == 'cuda' else -1,
+                self.device.index if self.device.type == "cuda" else -1,
                 # Create the models as expected by EVM_Inference
                 {k: vars(v) for k, v in self.one_vs_rests.items()},
                 dtype=self.dtype,
@@ -538,7 +558,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         labels_dtype=None,
         train_hyperparams=None,
         device="cpu",
-        #TODO separate compute device from storage device, store on CPU always
+        # TODO separate compute device from storage device, store on CPU always
     ):
         """Performs the same load functionality as in MultipleEVM but loads the
         ordered labels from the h5 file for the label encoder and other
@@ -553,13 +573,9 @@ class ExtremeValueMachine(SupervisedClassifier):
         if "labels" in h5.keys():
             if labels is not None:
                 logging.info(
-                    " ".join(
-                        [
-                            "`labels` key exists in the HDF5 MEVM state file, but",
-                            "labels was given explicitly to `load()`. Ignoring the",
-                            "labels in the HDF5 file.",
-                        ]
-                    )
+                    "`labels` key exists in the HDF5 MEVM state file, but "
+                    "labels was given explicitly to `load()`. Ignoring the "
+                    "labels in the HDF5 file. "
                 )
             else:
                 if labels_dtype is None:
@@ -567,12 +583,8 @@ class ExtremeValueMachine(SupervisedClassifier):
                 labels = h5["labels"][:].astype(labels_dtype)
         elif labels is None:
             raise KeyError(
-                " ".join(
-                    [
-                        "No `labels` dataset available in given hdf5.",
-                        "and `labels` parameter is None",
-                    ]
-                )
+                "No `labels` dataset available in given hdf5. and `labels` "
+                "parameter is None"
             )
 
         # Load the EVM1vsRest models
@@ -602,12 +614,8 @@ class ExtremeValueMachine(SupervisedClassifier):
             }
         elif not isinstance(train_hyperparams, dict):
             raise TypeError(
-                " ".join(
-                    [
-                        "`train_hyperparams` expected type: None, list, or dict, but",
-                        f"recieved {type(train_hyperparams)}",
-                    ]
-                )
+                "`train_hyperparams` expected type: None, list, or dict, but "
+                f"recieved {type(train_hyperparams)}"
             )
 
         _increments = train_hyperparams.pop("_increments")
