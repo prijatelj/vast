@@ -133,6 +133,7 @@ def EVM_Training(
     gpu: int,
     models=None,
     dtype: torch.dtype = torch.double,
+    atol: float = 1e-06,
 ) -> Iterator[Tuple[str, Tuple[str, dict]]]:
     """
     :param pos_classes_to_process: List of class names to be processed by this function in the current process class.
@@ -248,7 +249,7 @@ def EVM_Training(
         assert torch.allclose(
             positive_distances[e].type(torch.FloatTensor),
             torch.zeros(positive_distances.shape[0]),
-            atol=1e-06,
+            atol=atol,
         ), "Distances of samples to themselves is not zero. This may be due to a precision issue, try increasing the atol value from 1e-06 to 1e-05."
 
         for distance_multiplier, cover_threshold, org_tailsize in itertools.product(
@@ -259,7 +260,9 @@ def EVM_Training(
             else:
                 tailsize = int(org_tailsize)
             # Perform actual EVM training
-            weibull_model = fit_low(bottom_k_distances, distance_multiplier, tailsize, gpu, dtype=dtype)
+            weibull_model = fit_low(
+                bottom_k_distances, distance_multiplier, tailsize, gpu, dtype=dtype
+            )
             extreme_vectors_models, extreme_vectors_indexes, covered_vectors = set_cover(
                 weibull_model, positive_distances.to(device), cover_threshold
             )

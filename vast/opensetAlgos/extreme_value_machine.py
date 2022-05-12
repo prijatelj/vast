@@ -203,6 +203,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         chunk_size=200,
         tail_size_is_ratio=True,
         dtype=torch.double,
+        atol=1e-06,
         *args,
         **kwargs,
     ):
@@ -222,6 +223,9 @@ class ExtremeValueMachine(SupervisedClassifier):
             the available data during fitting.
         dtype : str = torch.double
             str | torch.dtype
+        atol : float = 1e-06
+            The absolute tolerance for the comparisoin of distances to zero
+            vectrors to avoid comparing points to themselves.
 
         Notes
         -----
@@ -231,6 +235,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         super(ExtremeValueMachine, self).__init__(labels, *args, **kwargs)
         self.one_vs_rests = None
         self._increments = 0
+        self.atol = atol
 
         self.device = torch.device(device)
         if isinstance(dtype, str):
@@ -330,7 +335,8 @@ class ExtremeValueMachine(SupervisedClassifier):
             and (isinstance(labels, list) or isinstance(labels, torch.Tensor))
             and len(points) == len(labels)
         ):
-            labels = torch.Tensor(labels)
+            if isinstance(labels, list):
+                labels = torch.Tensor(labels)
             unique = torch.unique(labels)
             points = [points[labels == u] for u in unique]
         elif isinstance(points, list):
@@ -390,6 +396,7 @@ class ExtremeValueMachine(SupervisedClassifier):
             self._args,
             self.device.index if self.device.type == "cuda" else -1,
             dtype=self.dtype,
+            atol=self.atol,
         ):
             self.one_vs_rests[one_vs_rest[1][0]] = EVM1vsRest(
                 one_vs_rest[1][1]["extreme_vectors"],
@@ -419,6 +426,7 @@ class ExtremeValueMachine(SupervisedClassifier):
             self.device.index if self.device.type == "cuda" else -1,
             {k: vars(v) for k, v in self.one_vs_rests.items()},
             dtype=self.dtype,
+            atol=self.atol,
         ):
             self.one_vs_rests[one_vs_rest[1][0]] = EVM1vsRest(
                 one_vs_rest[1][1]["extreme_vectors"],
