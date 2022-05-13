@@ -567,6 +567,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         train_hyperparams=None,
         device="cpu",
         # TODO separate compute device from storage device, store on CPU always
+        **extra_params,
     ):
         """Performs the same load functionality as in MultipleEVM but loads the
         ordered labels from the h5 file for the label encoder and other
@@ -636,5 +637,9 @@ class ExtremeValueMachine(SupervisedClassifier):
         evm.one_vs_rests = one_vs_rests
         evm._increments = _increments
         evm.tail_size_int = tail_size_int
+
+        if extra_params:
+            for key, value in extra_params.items():
+                setattr(evm, key, value)
 
         return evm
