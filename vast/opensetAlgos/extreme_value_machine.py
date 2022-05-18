@@ -1,11 +1,30 @@
 """
-2021 copyright Derek S. Prijatelj
-[Insert License Here]
+MIT License
+
+Copyright (c) 2022 Derek S. Prijatelj
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 =====
 
 Modified from Derek's original 2020 wrapper for MultipleEVM class from VAST.
-This also performs some modifications to the older MultipleEVM code for saving
-and loading the EVM1vsRest objects.
+This also performs some modifications to the older MultipleEVM code originally
+from VAST for saving and loading the EVM1vsRest objects.
 """
 from dataclasses import dataclass
 import logging
@@ -394,7 +413,7 @@ class ExtremeValueMachine(SupervisedClassifier):
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
-            self.device.index if self.device.type == "cuda" else -1,
+            self.device.index if self.device.type == "cuda" else 0,
             dtype=self.dtype,
             atol=self.atol,
         ):
@@ -423,7 +442,7 @@ class ExtremeValueMachine(SupervisedClassifier):
             list(self.label_enc.encoder.inv),
             {i: pts for i, pts in enumerate(points)},
             self._args,
-            self.device.index if self.device.type == "cuda" else -1,
+            self.device.index if self.device.type == "cuda" else 0,
             {k: vars(v) for k, v in self.one_vs_rests.items()},
             dtype=self.dtype,
             atol=self.atol,
@@ -567,6 +586,7 @@ class ExtremeValueMachine(SupervisedClassifier):
         train_hyperparams=None,
         device="cpu",
         # TODO separate compute device from storage device, store on CPU always
+        load_cls=None,
         **extra_params,
     ):
         """Performs the same load functionality as in MultipleEVM but loads the
@@ -629,7 +649,11 @@ class ExtremeValueMachine(SupervisedClassifier):
 
         _increments = train_hyperparams.pop("_increments")
         tail_size_int = train_hyperparams.pop("tail_size_int")
-        evm = ExtremeValueMachine(
+        # TODO If you inherit this, you have to work around using the correct
+        # class. This is why we have factories for this kind of loading.
+        if load_cls is None:
+            load_cls = ExtremeValueMachine
+        evm = load_cls(
             labels=labels,
             device=device,
             **train_hyperparams,
@@ -638,6 +662,8 @@ class ExtremeValueMachine(SupervisedClassifier):
         evm._increments = _increments
         evm.tail_size_int = tail_size_int
 
+        # NOTE the purpose of this overlaps with that of train_hyperparams,
+        # somewhat, but this is for future, unseen use, like inheritance.
         if extra_params:
             for key, value in extra_params.items():
                 setattr(evm, key, value)
